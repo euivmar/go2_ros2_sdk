@@ -1,21 +1,63 @@
-version: '3.8'
+version: "3.8"
 
 services:
   unitree_ros:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    environment:
-      - ROBOT_IP=${ROBOT_IP} 
-      - CONN_TYPE=${CONN_TYPE:-webrtc}
-      - WEBRTC_SERVER_HOST=0.0.0.0  # Listen on all interfaces
-      - WEBRTC_SERVER_PORT=${WEBRTC_SERVER_PORT:-9991}
-      - DISPLAY=${DISPLAY:-}  # For GUI applications like rviz2
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix  # X11 forwarding
-      - ${HOME}/.Xauthority:/root/.Xauthority:rw
-    network_mode: "host"  # Required for ROS2 discovery and robot communication
-    privileged: true  # Required for hardware access
+      context: .
+      dockerfile: Dockerfile
+
+    # Ejecuta con tu UID/GID (evita problemas de permisos en rootless)
+    user: "${UID:-1000}:${GID:-1000}"
+
+    # Red host: lo más fiable para ROS 2/DDS en podman rootless
+    network_mode: "host"
+
+    # Acceso a dispositivos necesarios (sin privileged)
     devices:
-      - /dev/input:/dev/input  # For joystick access
+      - /dev/input:/dev/input         # joystick/gamepad (opcional)
+      - /dev/dri:/dev/dri             # aceleración OpenGL (opcional)
+
+    ipc: "host"                       # /dev/shm grande (útil para RViz)
+    security_opt:
+      - label=disable                 # evita bloqueo SELinux (Fedora/RHEL)
+
+    environment:
+      # ROS 2 + CycloneDDS
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+
+      # Variables de tu stack
+      ROBOT_IP: ${ROBOT_IP:-}
+      CONN_TYPE: ${CONN_TYPE:-webrtc}
+      WEBRTC_SERVER_HOST: 0.0.0.0
+      WEBRTC_SERVER_PORT: ${WEBRTC_SERVER_PORT:-9991}
+
+      # GUI (X11)
+      DISPLAY: ${DISPLAY}
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR}
+
+      # Audio (PulseAudio) – opcional
+      PULSE_SERVER: "unix:${XDG_RUNTIME_DIR}/pulse/native"
+
+      # Evitar problemas de locales
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+
+    volumes:
+      # X11
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Xauthority hacia HOME del usuario en el contenedor
+      - ${HOME}/.Xauthority:/home/ros/.Xauthority:rw
+
+      # PulseAudio (opcional)
+      - ${XDG_RUNTIME_DIR}/pulse/native:${XDG_RUNTIME_DIR}/pulse/native
+      - ${HOME}/.config/pulse/cookie:/home/ros/.config/pulse/cookie:ro
+
+      # (Opcional) Montar tu src para desarrollo en vivo:
+      # - ./src:/ros2_ws/src:rw
+
+    # Usa entrypoint propio o el de la imagen base
+    entrypoint: ["/ros_entrypoint.sh"]
+    command: ["ros2", "launch", "go2_robot_sdk", "robot.launch.py"]
+
     restart: unless-stopped
+    init: true

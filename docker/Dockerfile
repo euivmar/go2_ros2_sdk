@@ -1,56 +1,57 @@
+# Imagen base ROS 2 Humble
 FROM ros:humble-ros-base
 
-# Install basic requirements
+SHELL ["/bin/bash", "-lc"]
+
+# ---- Dependencias del sistema ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    gnupg2 \
-    lsb-release \
-    python3-pip \
-    portaudio19-dev \
-    mesa-utils \
-    libgl1-mesa-glx \
-    libgl1-mesa-dri \
-    ros-humble-rviz2 \
-    software-properties-common \
-    ros-humble-rmw-cyclonedds-cpp \
-    ffmpeg
+    curl gnupg2 lsb-release python3-pip \
+    portaudio19-dev mesa-utils libgl1-mesa-glx libgl1-mesa-dri \
+    ros-humble-rviz2 ros-humble-rmw-cyclonedds-cpp \
+    software-properties-common ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
 
-# Install specific numpy version first
-RUN pip install 'numpy<2.0.0'
+# ---- Evitar conflicto con numpy ----
+RUN pip install --no-cache-dir 'numpy<2.0.0'
 
-# Create workspace
+# ---- Usuario normal (rootless-friendly) ----
+ARG USERNAME=ros
+ARG USER_UID=1000
+ARG USER_GID=1000
+RUN groupadd --gid ${USER_GID} ${USERNAME} \
+ && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} \
+ && mkdir -p /ros2_ws && chown -R ${USERNAME}:${USERNAME} /ros2_ws
+
+USER ${USERNAME}
 WORKDIR /ros2_ws
 
-# Clone the repository with submodules
-COPY . /ros2_ws/src
+# ---- Código del workspace ----
+COPY --chown=${USERNAME}:${USERNAME} . /ros2_ws/src
 
-# Install Python requirements (with numpy constraint)
-RUN cd src && pip install -r requirements.txt
+# ---- Reqs Python del proyecto ----
+RUN cd src && if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
 
-# Install ROS dependencies
-RUN . /opt/ros/${ROS_DISTRO}/setup.sh && \
-    rosdep install --from-paths src --ignore-src -r -y
+# ---- Dependencias ROS ----
+RUN source /opt/ros/${ROS_DISTRO}/setup.bash \
+ && rosdep update \
+ && rosdep install --from-paths src --ignore-src -r -y
 
-# Build the workspace
-RUN . /opt/ros/${ROS_DISTRO}/setup.sh && \
-    colcon build
+# ---- Compilación ----
+RUN source /opt/ros/${ROS_DISTRO}/setup.bash \
+ && colcon build --symlink-install
 
-# Source ROS2 and workspace in bashrc
-RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc && \
-    echo "source /ros2_ws/install/setup.bash" >> /root/.bashrc
+# ---- Añadir overlay al entrypoint base de ROS ----
+USER root
+RUN sed --in-place --expression '$isource "/ros2_ws/install/setup.bash"' /ros_entrypoint.sh
+USER ${USERNAME}
 
-# Set environment variables
+# ---- Entorno por defecto ----
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ENV ROBOT_IP=""
 ENV CONN_TYPE="webrtc"
 ENV WEBRTC_SERVER_HOST="0.0.0.0"
 ENV WEBRTC_SERVER_PORT="9991"
 
-# Remove apt cache
-RUN rm -rf /var/lib/apt/lists/*
-
-# add /ros2_ws to the entrypoint
-RUN sed --in-place --expression \
-      '$isource "/ros2_ws/install/setup.bash"' \
-      /ros_entrypoint.sh
-
+# ---- Entrypoint + comando ----
+ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["ros2", "launch", "go2_robot_sdk", "robot.launch.py"]

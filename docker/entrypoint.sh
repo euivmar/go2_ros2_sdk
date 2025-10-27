@@ -1,9 +1,12 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
-# Source ROS2 environment
-source /opt/ros/${ROS_DISTRO}/setup.bash
-source /ros2_ws/install/setup.bash
+# Fuente de ROS 2 y del workspace (el Dockerfile ya inyecta el overlay en /ros_entrypoint.sh)
+if [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
+  source "/opt/ros/${ROS_DISTRO}/setup.bash"
+fi
+if [ -f "/ros2_ws/install/setup.bash" ]; then
+  source "/ros2_ws/install/setup.bash"
+fi
 
-# Execute the command passed to docker run
-exec "$@" 
+exec "$@"
